@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, Check, CheckCheck, ExternalLink, Languages, Loader2, PenLine, Play, RotateCcw, Scale, Search, ShieldAlert,
+  AlertTriangle, Check, CheckCheck, Eraser, ExternalLink, Languages, Loader2, PenLine, Play, RotateCcw, Scale, Search, ShieldAlert,
   ShieldCheck, SkipForward, Tags, X,
 } from 'lucide-react';
 import DraftText from '../components/DraftText.jsx';
@@ -33,6 +33,7 @@ const KIND = {
   'fr-login': ['Unsupported', 'text-slate-300 bg-white/10'],
 };
 
+const MAX_BODY = 10_000; // contract v1
 const RULES = Object.entries(REASONS).sort((a, b) => a[1].severity.localeCompare(b[1].severity));
 const TOKEN_SPLIT = /(\[(?:EMAIL|PHONE|IP|IBAN|CARD|ACCOUNT)_\d+\])/;
 const ODD_SPACES = /[  -​  　]/g;
@@ -81,9 +82,10 @@ function alignMasked(original, masked) {
 export default function TriageLab() {
   const { triage } = useTickets();
   const reduce = useReducedMotion();
-  const [sample, setSample] = useState(SAMPLES[0].id);
-  const [subject, setSubject] = useState(SAMPLES[0].subject);
-  const [body, setBody] = useState(SAMPLES[0].body);
+  const [sample, setSample] = useState(null);
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+  const bodyRef = useRef(null);
   const [sent, setSent] = useState(null);
   const [result, setResult] = useState(null);
   const [step, setStep] = useState(0); // stages fully done
@@ -106,11 +108,27 @@ export default function TriageLab() {
     setSample(s.id);
     setSubject(s.subject);
     setBody(s.body);
+    setError(null);
+  };
+  // Any edit makes it the user's own ticket.
+  const edit = (set, value) => {
+    set(value);
+    setSample(null);
+    setError(null);
+  };
+  const clearForm = () => {
+    setSubject('');
+    setBody('');
+    setSample(null);
+    setError(null);
+    bodyRef.current?.focus();
   };
 
   const run = async () => {
+    if (running) return;
     if (!body.trim()) {
-      setError('Add the ticket body. The subject is optional.');
+      setError('Write the message first. The subject is optional.');
+      bodyRef.current?.focus();
       return;
     }
     clearTimers();
@@ -165,9 +183,78 @@ export default function TriageLab() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 px-4 pb-12 sm:px-6 lg:grid-cols-[minmax(320px,400px)_minmax(0,1fr)] lg:px-8">
-        {/* Composer */}
+        {/* Composer: your own ticket first; scenarios underneath fill the same form */}
         <aside ref={composer} className="self-start rounded-2xl border border-white/10 bg-white/[0.03] p-4 lg:sticky lg:top-4">
-          <h2 className="text-[14px] font-semibold text-white">Pick a scenario</h2>
+          <form onSubmit={(e) => { e.preventDefault(); run(); }}>
+            <div className="flex items-baseline justify-between gap-2">
+              <h2 className="text-[15px] font-semibold text-white">Your ticket</h2>
+              {(subject || body) && !running && (
+                <button type="button" onClick={clearForm} className="flex items-center gap-1 text-[12.5px] text-slate-400 hover:text-white">
+                  <Eraser size={13} /> Clear
+                </button>
+              )}
+            </div>
+            <p className="mt-0.5 text-[12.5px] text-slate-400">
+              {sample ? (
+                <>Filled from the <b className="font-medium text-slate-200">{SAMPLES.find((x) => x.id === sample)?.label.replace(/^[A-Z]{2} · /, '')}</b> scenario. Edit it or write your own.</>
+              ) : (
+                'Write any support ticket, in any language.'
+              )}
+            </p>
+
+            <label className="mt-3 block text-[13px] font-medium text-slate-300" htmlFor="lab-subject">
+              Subject <span className="font-normal text-slate-500">(optional)</span>
+            </label>
+            <input
+              id="lab-subject"
+              value={subject}
+              onChange={(e) => edit(setSubject, e.target.value)}
+              disabled={running}
+              maxLength={300}
+              placeholder="e.g. Cannot log in since this morning"
+              className="mt-1 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-[14px] text-white placeholder:text-slate-500 outline-none focus:border-teal-300/70 focus:ring-2 focus:ring-teal-300/20"
+            />
+            <label className="mt-3 block text-[13px] font-medium text-slate-300" htmlFor="lab-body">Message</label>
+            <textarea
+              id="lab-body"
+              ref={bodyRef}
+              value={body}
+              onChange={(e) => edit(setBody, e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault();
+                  run();
+                }
+              }}
+              disabled={running}
+              maxLength={MAX_BODY}
+              rows={7}
+              placeholder="Describe the problem as a customer would. Add an email or phone number to see the gateway hide it."
+              className="mt-1 w-full resize-y rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-[14px] leading-relaxed text-white placeholder:text-slate-500 outline-none focus:border-teal-300/70 focus:ring-2 focus:ring-teal-300/20"
+            />
+            <div className="mt-1 flex justify-between text-[12px] text-slate-500">
+              <span>Ctrl + Enter to run</span>
+              <span className="tabular">{body.length.toLocaleString('en-US')} / {MAX_BODY.toLocaleString('en-US')}</span>
+            </div>
+            {error && <p role="alert" className="mt-2 rounded-lg bg-red-500/15 px-3 py-2 text-[13px] text-red-200">{error}</p>}
+            <div className="mt-3 flex gap-2">
+              <button
+                type="submit"
+                disabled={running}
+                className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-teal-400 px-4 py-2.5 text-[14.5px] font-semibold text-[#04211e] transition hover:bg-teal-300 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none disabled:opacity-60"
+              >
+                {running ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} fill="currentColor" />}
+                {running ? 'Triaging…' : finished ? 'Run again' : 'Run triage'}
+              </button>
+              {running && result && (
+                <button type="button" onClick={skip} className="flex items-center gap-1.5 rounded-lg border border-white/15 px-3 text-[13.5px] text-slate-200 hover:bg-white/5">
+                  <SkipForward size={15} /> Skip
+                </button>
+              )}
+            </div>
+          </form>
+
+          <h2 className="mt-5 border-t border-white/10 pt-4 text-[14px] font-semibold text-white">Or start from a scenario</h2>
           <ul className="mt-2.5 space-y-1.5">
             {SAMPLES.map((s) => {
               const [kind, kcls] = KIND[s.id] ?? ['Sample', 'text-slate-300 bg-white/10'];
@@ -179,12 +266,12 @@ export default function TriageLab() {
                     onClick={() => pick(s)}
                     disabled={running}
                     aria-pressed={on}
-                    className={`w-full rounded-xl border px-3 py-2.5 text-left transition outline-none focus-visible:ring-2 focus-visible:ring-teal-300 disabled:opacity-50 ${
+                    className={`w-full rounded-xl border px-3 py-2 text-left transition outline-none focus-visible:ring-2 focus-visible:ring-teal-300 disabled:opacity-50 ${
                       on ? 'border-teal-400/60 bg-teal-400/10' : 'border-white/10 hover:border-white/25 hover:bg-white/[0.04]'
                     }`}
                   >
                     <span className="flex items-center gap-2">
-                      <span className={`rounded px-1.5 py-0.5 text-[11.5px] font-semibold ${kcls}`}>{kind}</span>
+                      <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11.5px] font-semibold ${kcls}`}>{kind}</span>
                       <span className="truncate text-[13.5px] font-medium text-white">{s.label.replace(/^[A-Z]{2} · /, '')}</span>
                     </span>
                     <span className="mt-0.5 block text-[12.5px] text-slate-400">{s.hint}</span>
@@ -193,41 +280,6 @@ export default function TriageLab() {
               );
             })}
           </ul>
-
-          <label className="mt-4 block text-[13px] font-medium text-slate-300" htmlFor="lab-subject">Subject</label>
-          <input
-            id="lab-subject"
-            value={subject}
-            onChange={(e) => { setSubject(e.target.value); setSample(null); }}
-            disabled={running}
-            className="mt-1 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-[14px] text-white outline-none focus:border-teal-300/70 focus:ring-2 focus:ring-teal-300/20"
-          />
-          <label className="mt-3 block text-[13px] font-medium text-slate-300" htmlFor="lab-body">Message</label>
-          <textarea
-            id="lab-body"
-            value={body}
-            onChange={(e) => { setBody(e.target.value); setSample(null); }}
-            disabled={running}
-            rows={6}
-            className="mt-1 w-full resize-y rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-[14px] leading-relaxed text-white outline-none focus:border-teal-300/70 focus:ring-2 focus:ring-teal-300/20"
-          />
-          {error && <p className="mt-2 rounded-lg bg-red-500/15 px-3 py-2 text-[13px] text-red-200">{error}</p>}
-          <div className="mt-3 flex gap-2">
-            <button
-              type="button"
-              onClick={run}
-              disabled={running}
-              className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-teal-400 px-4 py-2.5 text-[14.5px] font-semibold text-[#04211e] transition hover:bg-teal-300 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none disabled:opacity-60"
-            >
-              {running ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} fill="currentColor" />}
-              {running ? 'Triaging…' : finished ? 'Run again' : 'Run triage'}
-            </button>
-            {running && result && (
-              <button type="button" onClick={skip} className="flex items-center gap-1.5 rounded-lg border border-white/15 px-3 text-[13.5px] text-slate-200 hover:bg-white/5">
-                <SkipForward size={15} /> Skip
-              </button>
-            )}
-          </div>
         </aside>
 
         {/* Pipeline */}
@@ -236,8 +288,8 @@ export default function TriageLab() {
 
           {!started && (
             <div className="rounded-2xl border border-dashed border-white/15 px-6 py-16 text-center">
-              <p className="text-[16px] font-medium text-white">Pick a scenario and run it.</p>
-              <p className="mt-1 text-[14px] text-slate-400">Try the attack first: a refund demand with a hidden prompt injection.</p>
+              <p className="text-[16px] font-medium text-white">Write a ticket, or start from a scenario, then run it.</p>
+              <p className="mt-1 text-[14px] text-slate-400">Try slipping in an email address, an IBAN or “ignore previous instructions” and watch what the gateway and the gate do.</p>
             </div>
           )}
 
@@ -252,7 +304,10 @@ export default function TriageLab() {
           </div>
           {visible(5) && <DraftCard t={result} reduce={reduce} />}
           {visible(6) && <ValidateCard t={result} />}
-          {finished && <Verdict t={result} onAgain={() => composer.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth' })} />}
+          {finished && <Verdict t={result} onAgain={() => {
+            composer.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth' });
+            bodyRef.current?.focus({ preventScroll: true });
+          }} />}
 
           {started && (
             <p className="text-[12.5px] text-slate-500">
@@ -601,7 +656,7 @@ function Verdict({ t, onAgain }) {
           <ExternalLink size={15} /> Open {t.ticket_id}
         </button>
         <button type="button" onClick={onAgain} className="flex items-center gap-1.5 rounded-lg border border-white/20 px-3.5 py-2 text-[14px] text-white hover:bg-white/5">
-          <RotateCcw size={15} /> Try another scenario
+          <RotateCcw size={15} /> Try another ticket
         </button>
       </div>
       <p className="mt-3 text-[12.5px] text-slate-400">It is also on Overview with the other tickets from this session.</p>
